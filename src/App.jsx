@@ -26,22 +26,22 @@ const COMP_KEY = "archery-comps-v1";
 // ─── Storage helpers ──────────────────────────────────────────────────────────
 async function loadSessions() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const res = await window.storage.get(STORAGE_KEY);
+    return res ? JSON.parse(res.value) : [];
   } catch { return []; }
 }
 async function saveSessions(sessions) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions)); }
+  try { await window.storage.set(STORAGE_KEY, JSON.stringify(sessions)); }
   catch (e) { console.error("Storage error", e); }
 }
 async function loadComps() {
   try {
-    const raw = localStorage.getItem(COMP_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const res = await window.storage.get(COMP_KEY);
+    return res ? JSON.parse(res.value) : [];
   } catch { return []; }
 }
 async function saveComps(comps) {
-  try { localStorage.setItem(COMP_KEY, JSON.stringify(comps)); }
+  try { await window.storage.set(COMP_KEY, JSON.stringify(comps)); }
   catch (e) { console.error("Storage comp error", e); }
 }
 
@@ -575,6 +575,7 @@ const blankSession = () => ({
   fatigueArrow: "",
   mentalGoal: "",
   rounds: [],
+  warmup: [],       // {id, count} solo volumen
 });
 
 export default function ArcheryTracker() {
@@ -585,6 +586,7 @@ export default function ArcheryTracker() {
   const [pending, setPending]         = useState(null);
   const [period, setPeriod]           = useState("month");
   const [openId, setOpenId]           = useState(null);
+  const [warmupInput, setWarmupInput] = useState("");
   const [comp, setComp]               = useState(blankComp("indoor"));
   const [compArrowInput, setCAI]      = useState(""); // temp input for comp arrows
   const [compActiveRound, setCAR]     = useState(1);  // 1 or 2
@@ -617,8 +619,9 @@ export default function ArcheryTracker() {
   };
   const setArrow = (idx, val) => {
     if (!pending) return;
-    // val puede ser 10.5 (mosca) o número 0-10
-    const v = val===10.5 ? 10.5 : Math.min(10,Math.max(0,parseInt(val)||0));
+    const n = parseInt(val)||0;
+    // 11 typed = mosca (stored as 10.5), anything else clamp 0-10
+    const v = n===11 ? 10.5 : val===10.5 ? 10.5 : Math.min(10,Math.max(0,n));
     const arrows = [...pending.arrows]; arrows[idx]=v;
     setPending(p => ({ ...p, arrows, total:arrows.reduce((a,b)=>a+ptVal(b),0) }));
   };
@@ -876,6 +879,55 @@ export default function ArcheryTracker() {
               {/* ── SCORE MODE ── */}
               {session.mode==="score" && (
                 <>
+                  {/* Warmup block */}
+                  <div style={{ background:"#f8f7f4", borderLeft:"3px solid #bbb", padding:"12px 14px" }}>
+                    <div style={{ ...S.mono, fontSize:9, letterSpacing:"0.15em", textTransform:"uppercase", color:"#888", marginBottom:10 }}>
+                      Calentamiento · {session.warmup.reduce((a,w)=>a+w.count,0)} flechas
+                    </div>
+                    {/* Warmup quick buttons */}
+                    <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:8 }}>
+                      {[session.arrowsPerSerie, 3, 6, 10].filter((v,i,a)=>a.indexOf(v)===i).map(n => (
+                        <button key={n} className="tap"
+                          onClick={()=>{
+                            const w = { id:Date.now(), count:parseInt(n)||6 };
+                            setSession(s=>({...s, warmup:[...s.warmup, w]}));
+                          }}
+                          style={{ background:"#888", color:"#fff", border:"none", padding:"10px 0",
+                            ...S.mono, fontSize:11, fontWeight:700, cursor:"pointer", width:44, borderRadius:2 }}>
+                          +{n}
+                        </button>
+                      ))}
+                    </div>
+                    {/* Custom warmup */}
+                    <div style={{ display:"flex", gap:6, alignItems:"center", marginBottom:8 }}>
+                      <input type="number" min={1} max={99} placeholder="Nº flechas"
+                        value={warmupInput} onChange={e=>setWarmupInput(e.target.value)}
+                        style={{ ...S.inp, flex:1, width:"auto", fontSize:12 }} />
+                      <button style={{ ...S.btnS, width:"auto", padding:"8px 14px", whiteSpace:"nowrap", fontSize:11 }}
+                        onClick={()=>{
+                          const n = parseInt(warmupInput)||0;
+                          if (!n) return;
+                          const w = { id:Date.now(), count:n };
+                          setSession(s=>({...s, warmup:[...s.warmup, w]}));
+                          setWarmupInput("");
+                        }}>+ Serie cal.</button>
+                    </div>
+                    {/* Warmup series list */}
+                    {session.warmup.length>0 && (
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
+                        {session.warmup.map((w,i)=>(
+                          <div key={w.id} style={{ display:"flex", alignItems:"center", gap:4,
+                            background:"#e8e8e6", padding:"3px 8px 3px 10px" }}>
+                            <span style={{ ...S.mono, fontSize:11, fontWeight:700 }}>{w.count}↗</span>
+                            <button className="tap" onClick={()=>setSession(s=>({...s, warmup:s.warmup.filter(x=>x.id!==w.id)}))}
+                              style={{ background:"none", border:"none", cursor:"pointer", color:"#aaa", fontSize:11, padding:0, lineHeight:1 }}>✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Score rounds */}
                   <div style={{ ...S.mono, fontSize:9, letterSpacing:"0.15em", textTransform:"uppercase", color:"#bbb", marginBottom:0 }}>
                     Ronda {session.rounds.length+1}
                   </div>
@@ -890,13 +942,13 @@ export default function ArcheryTracker() {
                   <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:10 }}>
                     {pending.arrows.map((pts,i) => {
                       const isMosca = pts===10.5;
-                      const dispVal = isMosca ? 10 : pts;
+                      const dispVal = isMosca ? 11 : pts;
                       const bg = pts>=9?"#F5C518":pts>=7?"#E8392A":pts>=5?"#2B6CB0":pts>=3?"#1a1a1a":pts>=1?"#f0efe8":"#f5f5f5";
                       const fg = pts>=9?"#000":pts>=3?"#fff":"#333";
                       return (
                         <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:3 }}>
                           <div style={{ position:"relative" }}>
-                            <input type="number" min={0} max={10} value={dispVal}
+                            <input type="number" min={0} max={11} value={dispVal}
                               onChange={e=>setArrow(i,e.target.value)}
                               style={{
                                 width:40, height:40, textAlign:"center", ...S.mono, fontSize:16, fontWeight:700,
@@ -906,14 +958,25 @@ export default function ArcheryTracker() {
                             {isMosca && (
                               <div style={{ position:"absolute", top:-6, right:-6, background:"#000", color:"#F5C518", fontSize:8, fontWeight:700, padding:"1px 4px", fontFamily:"'DM Mono',monospace" }}>X</div>
                             )}
+                            {/* Delete arrow button */}
+                            <button className="tap"
+                              onClick={()=>setPending(p=>{
+                                const arrows = p.arrows.filter((_,idx)=>idx!==i);
+                                return { ...p, arrows, total:arrows.reduce((a,b)=>a+(b===10.5?11:b),0) };
+                              })}
+                              style={{ position:"absolute", top:-6, left:-6, width:14, height:14, borderRadius:"50%",
+                                background:"#ccc", color:"#fff", border:"none", cursor:"pointer",
+                                fontSize:9, lineHeight:"14px", textAlign:"center", padding:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                              ×
+                            </button>
                           </div>
-                          {dispVal===10 && (
+                          {dispVal===11 && (
                             <button onClick={()=>toggleMosca(i)}
-                              style={{ fontSize:8, ...S.mono, background:"none", border:"none", cursor:"pointer", color:isMosca?"#000":"#bbb", fontWeight:isMosca?700:400, padding:0 }}>
-                              {isMosca?"✓ mosca":"mosca"}
+                              style={{ fontSize:8, ...S.mono, background:"none", border:"none", cursor:"pointer", color:"#000", fontWeight:700, padding:0 }}>
+                              ✓ mosca
                             </button>
                           )}
-                          {dispVal!==10 && <span style={{ fontSize:8, color:"#aaa" }}>F{i+1}</span>}
+                          {dispVal!==11 && <span style={{ fontSize:8, color:"#aaa" }}>F{i+1}</span>}
                         </div>
                       );
                     })}
@@ -921,9 +984,18 @@ export default function ArcheryTracker() {
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
                     <div>
                       <span style={{ fontSize:9, color:"#888", textTransform:"uppercase", letterSpacing:"0.1em" }}>Total </span>
-                      <span style={{ ...S.serif, fontSize:26, fontWeight:700 }}>{pending.arrows.reduce((a,b)=>a+b,0)}</span>
+                      <span style={{ ...S.serif, fontSize:26, fontWeight:700 }}>{pending.arrows.reduce((a,b)=>a+(b===10.5?11:b),0)}</span>
                     </div>
                     {pending.notes && <div style={{ fontSize:10, color:"#666", maxWidth:"55%", textAlign:"right", lineHeight:1.4 }}>{pending.notes}</div>}
+                  </div>
+                  {/* Extra arrow button */}
+                  <div style={{ marginBottom:10 }}>
+                    <button className="tap"
+                      onClick={()=>setPending(p=>({ ...p, arrows:[...p.arrows, 0] }))}
+                      style={{ ...S.btnS, fontSize:10, padding:"6px 14px", width:"auto", color:"#888", borderColor:"#ddd" }}>
+                      + Flecha extra
+                    </button>
+                    <span style={{ ...S.mono, fontSize:9, color:"#ccc", marginLeft:8 }}>añade un cuadro más</span>
                   </div>
                   <div style={{ display:"flex", gap:8 }}>
                     <button style={{ ...S.btnP, flex:1 }} onClick={confirmRound}>✓ Guardar ronda</button>
@@ -974,7 +1046,7 @@ export default function ArcheryTracker() {
                     <div>
                       <div style={{ fontSize:9, letterSpacing:"0.1em", textTransform:"uppercase", color:"#888" }}>Flechas tiradas</div>
                       <div style={{ ...S.serif, fontSize:30, fontWeight:900, lineHeight:1 }}>{curArrows.length}</div>
-                      <div style={{ ...S.mono, fontSize:9, color:"#bbb", marginTop:2 }}>{session.rounds.length} series</div>
+                      <div style={{ ...S.mono, fontSize:9, color:"#bbb", marginTop:2 }}>{session.rounds.length} series{session.warmup?.length>0 ? ` · cal. ${session.warmup.reduce((a,w)=>a+w.count,0)}↗` : ""}</div>
                     </div>
                     {session.mode==="score" && (
                       <div style={{ textAlign:"right" }}>
