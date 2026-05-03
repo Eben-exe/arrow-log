@@ -26,22 +26,22 @@ const COMP_KEY = "archery-comps-v1";
 // ─── Storage helpers ──────────────────────────────────────────────────────────
 async function loadSessions() {
   try {
-    const res = await window.storage.get(STORAGE_KEY);
-    return res ? JSON.parse(res.value) : [];
+    const res = localStorage.getItem(STORAGE_KEY);
+    return res ? JSON.parse(res) : [];
   } catch { return []; }
 }
 async function saveSessions(sessions) {
-  try { await window.storage.set(STORAGE_KEY, JSON.stringify(sessions)); }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions)); }
   catch (e) { console.error("Storage error", e); }
 }
 async function loadComps() {
   try {
-    const res = await window.storage.get(COMP_KEY);
-    return res ? JSON.parse(res.value) : [];
+    const res = localStorage.getItem(COMP_KEY);
+    return res ? JSON.parse(res) : [];
   } catch { return []; }
 }
 async function saveComps(comps) {
-  try { await window.storage.set(COMP_KEY, JSON.stringify(comps)); }
+  try { localStorage.setItem(COMP_KEY, JSON.stringify(comps)); }
   catch (e) { console.error("Storage comp error", e); }
 }
 
