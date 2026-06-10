@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DIANA_TYPES = [
@@ -592,6 +592,7 @@ export default function ArcheryTracker() {
   const [compActiveRound, setCAR]     = useState(1);  // 1 or 2
 
   const [allComps, setAllComps] = useState([]);
+  const [error, setError]       = useState("");
 
   useEffect(() => {
     Promise.all([loadSessions(), loadComps()]).then(([s,comps]) => {
@@ -615,7 +616,6 @@ export default function ArcheryTracker() {
   const manualRound = () => {
     const arrows = Array(parseInt(session.arrowsPerSerie)||3).fill(0);
     setPending({ arrows, total:0, count:arrows.length, notes:"", images:[] });
-    setImgs([]);
   };
   const setArrow = (idx, val) => {
     if (!pending) return;
@@ -642,6 +642,7 @@ export default function ArcheryTracker() {
     const updated = existing>=0
       ? allSessions.map(s=>s.id===s2save.id?s2save:s)
       : [...allSessions, s2save];
+    setError("");
     const stripped = updated.map(s => ({ ...s, rounds:s.rounds.map(r=>({...r,images:[]})) }));
     setAllSessions(stripped);
     await saveSessions(stripped);
@@ -656,6 +657,60 @@ export default function ArcheryTracker() {
     if (openId===id) setOpenId(null);
   };
   const editSession = (s) => { setSession(s); setView("session"); setOpenId(null); };
+
+  // ── Backup (export / import JSON) ────────────────────────────────────────────
+  const fileRef = useRef(null);
+  const [backupMsg, setBackupMsg] = useState("");
+
+  const exportData = async () => {
+    const payload = { app:"arrow-log", version:1, exportedAt:new Date().toISOString(), sessions:allSessions, comps:allComps };
+    const json = JSON.stringify(payload, null, 2);
+    const fileName = `arrow-log-backup-${todayStr()}.json`;
+    // iOS PWA: hoja de compartir nativa (Archivos, iCloud, AirDrop…)
+    if (navigator.canShare) {
+      const file = new File([json], fileName, { type:"application/json" });
+      if (navigator.canShare({ files:[file] })) {
+        try { await navigator.share({ files:[file], title:"Arrow Log backup" }); setBackupMsg("Copia exportada."); return; }
+        catch (e) { if (e.name === "AbortError") return; /* si falla, cae a descarga */ }
+      }
+    }
+    const url = URL.createObjectURL(new Blob([json], { type:"application/json" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    setBackupMsg("Copia descargada.");
+  };
+
+  const importData = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const data = JSON.parse(reader.result);
+        const inSessions = Array.isArray(data.sessions) ? data.sessions : [];
+        const inComps    = Array.isArray(data.comps)    ? data.comps    : [];
+        if (!inSessions.length && !inComps.length) { setBackupMsg("El archivo no contiene datos de Arrow Log."); return; }
+        // Fusiona por id: lo importado actualiza/añade, nunca borra lo existente
+        const mergeById = (current, incoming) => {
+          const map = new Map(current.map(x=>[x.id,x]));
+          incoming.forEach(x => { if (x && x.id != null) map.set(x.id, x); });
+          return [...map.values()];
+        };
+        const mergedS = mergeById(allSessions, inSessions);
+        const mergedC = mergeById(allComps, inComps);
+        setAllSessions(mergedS); await saveSessions(mergedS);
+        setAllComps(mergedC);    await saveComps(mergedC);
+        setBackupMsg(`Importado: ${inSessions.length} sesiones, ${inComps.length} competiciones.`);
+      } catch {
+        setBackupMsg("No se pudo leer el archivo. ¿Es un backup de Arrow Log?");
+      } finally {
+        if (fileRef.current) fileRef.current.value = "";
+      }
+    };
+    reader.readAsText(f);
+  };
 
   // ── Current session stats ────────────────────────────────────────────────────
   const curArrows = session.rounds.flatMap(r=>r.arrows);
@@ -822,6 +877,22 @@ export default function ArcheryTracker() {
                   Historial ({allSessions.length} sesiones)
                 </button>
               )}
+
+              {/* Copia de seguridad */}
+              <div style={{ borderTop:"1px solid #eee", paddingTop:18 }}>
+                <div style={{ ...S.mono, fontSize:9, letterSpacing:"0.2em", textTransform:"uppercase", color:"#bbb", marginBottom:12 }}>
+                  Copia de seguridad
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                  <button style={S.btnS} onClick={exportData}>↓ Exportar</button>
+                  <button style={S.btnS} onClick={()=>fileRef.current && fileRef.current.click()}>↑ Importar</button>
+                </div>
+                <input ref={fileRef} type="file" accept="application/json,.json" onChange={importData} style={{ display:"none" }} />
+                {backupMsg && <div style={{ ...S.mono, fontSize:9, color:"#888", marginTop:8 }}>{backupMsg}</div>}
+                <div style={{ ...S.mono, fontSize:9, color:"#ccc", marginTop:6, lineHeight:1.5 }}>
+                  Tus datos viven solo en este dispositivo. Exporta un .json de vez en cuando y guárdalo en iCloud o Drive.
+                </div>
+              </div>
             </div>
           )}
 
@@ -1059,6 +1130,7 @@ export default function ArcheryTracker() {
 
                   <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:8 }}>
                     <button style={S.btnP} onClick={saveSession}>↓ Guardar sesión</button>
+                    {error && <div style={{ ...S.mono, fontSize:10, color:"#c0392b", marginTop:8, textAlign:"center" }}>{error}</div>}
                     {session.mode==="score" && (
                       <button style={S.btnS} onClick={()=>setView("stats")}>Ver estadísticas</button>
                     )}
